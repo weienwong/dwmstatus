@@ -15,11 +15,16 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <alsa/asoundlib.h>
+#include <alsa/control.h>
 #include <X11/Xlib.h>
 
-char *tzargentina = "America/Buenos_Aires";
+
+
+//char *tzargentina = "America/Buenos_Aires";
+char *tztoronto = "America/Toronto";
 char *tzutc = "UTC";
-char *tzberlin = "Europe/Berlin";
+//char *tzberlin = "Europe/Berlin";
 
 static Display *dpy;
 
@@ -176,16 +181,46 @@ gettemperature(char *base, char *sensor)
 }
 
 int
+get_vol(void)
+{
+    int vol;
+    snd_hctl_t *hctl;
+    snd_ctl_elem_id_t *id;
+    snd_ctl_elem_value_t *control;
+
+// To find card and subdevice: /proc/asound/, aplay -L, amixer controls
+    snd_hctl_open(&hctl, "hw:0", 0);
+    snd_hctl_load(hctl);
+
+    snd_ctl_elem_id_alloca(&id);
+    snd_ctl_elem_id_set_interface(id, SND_CTL_ELEM_IFACE_MIXER);
+
+// amixer controls
+    snd_ctl_elem_id_set_name(id, "Master Playback Volume");
+
+    snd_hctl_elem_t *elem = snd_hctl_find_elem(hctl, id);
+
+    snd_ctl_elem_value_alloca(&control);
+    snd_ctl_elem_value_set_id(control, id);
+
+    snd_hctl_elem_read(elem, control);
+    vol = (int)snd_ctl_elem_value_get_integer(control,0);
+
+    snd_hctl_close(hctl);
+    return vol;
+}
+
+int
 main(void)
 {
 	char *status;
 	char *avgs;
 	char *bat;
 	char *bat1;
-	char *tmar;
 	char *tmutc;
-	char *tmbln;
+	char *tmyyz;
 	char *t0, *t1, *t2;
+    int vol;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
@@ -196,16 +231,15 @@ main(void)
 		avgs = loadavg();
 		bat = getbattery("/sys/class/power_supply/BAT0");
 		bat1 = getbattery("/sys/class/power_supply/BAT1");
-		tmar = mktimes("%H:%M", tzargentina);
 		tmutc = mktimes("%H:%M", tzutc);
-		tmbln = mktimes("KW %W %a %d %b %H:%M %Z %Y", tzberlin);
+		tmyyz = mktimes(" %a %d %b %H:%M %Z %Y", tztoronto);
 		t0 = gettemperature("/sys/devices/virtual/hwmon/hwmon0", "temp1_input");
 		t1 = gettemperature("/sys/devices/virtual/hwmon/hwmon2", "temp1_input");
 		t2 = gettemperature("/sys/devices/virtual/hwmon/hwmon4", "temp1_input");
+        vol = get_vol();
 
-		status = smprintf("T:%s|%s|%s L:%s B:%s|%s A:%s U:%s %s",
-				t0, t1, t2, avgs, bat, bat1, tmar, tmutc,
-				tmbln);
+		status = smprintf("V:%d B:%s|%s U:%s %s",
+				vol, bat, bat1, tmutc, tmyyz);
 		setstatus(status);
 
 		free(t0);
@@ -214,10 +248,9 @@ main(void)
 		free(avgs);
 		free(bat);
 		free(bat1);
-		free(tmar);
 		free(tmutc);
-		free(tmbln);
 		free(status);
+        free(tmyyz);
 	}
 
 	XCloseDisplay(dpy);
