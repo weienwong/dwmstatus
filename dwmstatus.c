@@ -19,8 +19,6 @@
 #include <alsa/control.h>
 #include <X11/Xlib.h>
 
-
-
 //char *tzargentina = "America/Buenos_Aires";
 char *tztoronto = "America/Toronto";
 char *tzutc = "UTC";
@@ -211,6 +209,79 @@ get_vol(void)
 }
 
 int
+parse_netdev(unsigned long long int *receivedabs, unsigned long long int *sentabs)
+{
+	char buf[255];
+	char *datastart;
+	static int bufsize;
+	int rval;
+	FILE *devfd;
+	unsigned long long int receivedacc, sentacc;
+
+	bufsize = 255;
+	devfd = fopen("/proc/net/dev", "r");
+	rval = 1;
+
+	// Ignore the first two lines of the file
+	fgets(buf, bufsize, devfd);
+	fgets(buf, bufsize, devfd);
+
+	while (fgets(buf, bufsize, devfd)) {
+	    if ((datastart = strstr(buf, "lo:")) == NULL) {
+		datastart = strstr(buf, ":");
+
+		// With thanks to the conky project at http://conky.sourceforge.net/
+		sscanf(datastart + 1, "%llu  %*d     %*d  %*d  %*d  %*d   %*d        %*d       %llu",\
+		       &receivedacc, &sentacc);
+		*receivedabs += receivedacc;
+		*sentabs += sentacc;
+		rval = 0;
+	    }
+	}
+
+	fclose(devfd);
+	return rval;
+}
+
+void
+calculate_speed(char *speedstr, unsigned long long int newval, unsigned long long int oldval)
+{
+	double speed;
+	speed = (newval - oldval) / 1024.0;
+	if (speed > 1024.0) {
+	    speed /= 1024.0;
+	    sprintf(speedstr, "%.3f MB/s", speed);
+	} else {
+	    sprintf(speedstr, "%.2f KB/s", speed);
+	}
+}
+
+char *
+get_netusage(unsigned long long int *rec, unsigned long long int *sent)
+{
+	unsigned long long int newrec, newsent;
+	newrec = newsent = 0;
+	char downspeedstr[15], upspeedstr[15];
+	static char retstr[42];
+	int retval;
+
+	retval = parse_netdev(&newrec, &newsent);
+	if (retval) {
+	    fprintf(stdout, "Error when parsing /proc/net/dev file.\n");
+	    exit(1);
+	}
+
+	calculate_speed(downspeedstr, newrec, *rec);
+	calculate_speed(upspeedstr, newsent, *sent);
+
+	sprintf(retstr, "down: %s up: %s", downspeedstr, upspeedstr);
+
+	*rec = newrec;
+	*sent = newsent;
+	return retstr;
+}
+
+int
 main(void)
 {
 	char *status;
@@ -220,14 +291,20 @@ main(void)
 	char *tmutc;
 	char *tmyyz;
 	char *t0, *t1, *t2;
+    
     int vol;
-
-	if (!(dpy = XOpenDisplay(NULL))) {
+	
+    char *netstats;
+	static unsigned long long int rec, sent;
+	
+    if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
 
-	for (;;sleep(60)) {
+	parse_netdev(&rec, &sent);
+	
+    for (;;sleep(1)) {
 		avgs = loadavg();
 		bat = getbattery("/sys/class/power_supply/BAT0");
 		bat1 = getbattery("/sys/class/power_supply/BAT1");
@@ -236,10 +313,12 @@ main(void)
 		t0 = gettemperature("/sys/devices/virtual/hwmon/hwmon0", "temp1_input");
 		t1 = gettemperature("/sys/devices/virtual/hwmon/hwmon2", "temp1_input");
 		t2 = gettemperature("/sys/devices/virtual/hwmon/hwmon4", "temp1_input");
-        vol = get_vol();
 
-		status = smprintf("V:%d B:%s|%s U:%s %s",
-				vol, bat, bat1, tmutc, tmyyz);
+        vol = get_vol();
+		netstats = get_netusage(&rec, &sent);
+
+		status = smprintf("B:%s|%s N:%s U:%s %s V:%d",
+				 bat, bat1, netstats, tmutc, tmyyz, vol);
 		setstatus(status);
 
 		free(t0);
